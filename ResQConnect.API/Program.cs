@@ -1,29 +1,39 @@
 using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
 using ResQConnect.API.Data;
 using ResQConnect.API.Interfaces;
 using ResQConnect.API.Mappings;
 using ResQConnect.API.Middleware;
 using ResQConnect.API.Repositories;
 using ResQConnect.API.Services;
-using Microsoft.AspNetCore.DataProtection;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Listen on the port provided by the hosting platform
+var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
+builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
 
+// Data Protection
 builder.Services.AddDataProtection()
-    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(builder.Environment.ContentRootPath, "App_Data", "DataProtectionKeys")));
+    .PersistKeysToFileSystem(
+        new DirectoryInfo(Path.Combine(builder.Environment.ContentRootPath, "App_Data", "DataProtectionKeys"))
+    );
 
-// Add Database Context
+// Database
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
 {
     var serverVersion = new MySqlServerVersion(new Version(8, 0, 30));
+
     options.UseMySql(connectionString, serverVersion, mysqlOptions =>
     {
         mysqlOptions.EnableRetryOnFailure(
@@ -33,26 +43,27 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     });
 });
 
-// Configure CORS
+// CORS
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowClient", policy =>
     {
-        policy.WithOrigins("http://localhost:5173")
+        policy.AllowAnyOrigin()
               .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
+              .AllowAnyMethod();
     });
 });
 
-// Add Controllers
+// Controllers
 builder.Services.AddControllers();
 
-// Add AutoMapper
+// AutoMapper
 builder.Services.AddAutoMapper(typeof(MappingProfile).Assembly);
 
-// JWT Authentication Setup
-var secretKey = builder.Configuration["JwtSettings:Secret"] ?? "SuperSecretKeyForResQConnectDevDeployment2026";
+// JWT
+var secretKey = builder.Configuration["JwtSettings:Secret"]
+                ?? "SuperSecretKeyForResQConnectDevDeployment2026";
+
 var key = Encoding.ASCII.GetBytes(secretKey);
 
 builder.Services.AddAuthentication(options =>
@@ -62,25 +73,29 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
-    options.RequireHttpsMetadata = false; // Set to true in production
+    options.RequireHttpsMetadata = false;
     options.SaveToken = true;
+
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuerSigningKey = true,
         IssuerSigningKey = new SymmetricSecurityKey(key),
+
         ValidateIssuer = true,
         ValidIssuer = builder.Configuration["JwtSettings:Issuer"] ?? "ResQConnect.API",
+
         ValidateAudience = true,
         ValidAudience = builder.Configuration["JwtSettings:Audience"] ?? "ResQConnect.Client",
+
         ValidateLifetime = true,
         ClockSkew = TimeSpan.Zero
     };
 });
 
-// Inject Generic Repositories
+// Generic Repository
 builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
 
-// Inject Specific Repositories
+// Repositories
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IDisasterRepository, DisasterRepository>();
 builder.Services.AddScoped<ISOSRequestRepository, SOSRequestRepository>();
@@ -90,7 +105,7 @@ builder.Services.AddScoped<ITaskRepository, TaskRepository>();
 builder.Services.AddScoped<IMissingPersonRepository, MissingPersonRepository>();
 builder.Services.AddScoped<IHazardReportRepository, HazardReportRepository>();
 
-// Inject Services
+// Services
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IDisasterService, DisasterService>();
 builder.Services.AddScoped<ISOSService, SOSService>();
@@ -98,31 +113,34 @@ builder.Services.AddScoped<ICampService, CampService>();
 builder.Services.AddScoped<IVolunteerService, VolunteerService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 
-// Swagger/API Explorer
+// Swagger
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(options =>
+
+builder.Services.AddSwaggerGen(c =>
 {
-    options.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo { Title = "ResQConnect API", Version = "v1" });
-    
-    // Add Bearer Security Definition
-    options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    c.SwaggerDoc("v1", new OpenApiInfo
     {
-        Name = "Authorization",
-        Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
-        Scheme = "Bearer",
-        BearerFormat = "JWT",
-        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
-        Description = "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer {token}\""
+        Title = "ResQConnect API",
+        Version = "v1"
     });
 
-    options.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "Enter JWT Token",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
+
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
-            new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+            new OpenApiSecurityScheme
             {
-                Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                Reference = new OpenApiReference
                 {
-                    Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+                    Type = ReferenceType.SecurityScheme,
                     Id = "Bearer"
                 }
             },
@@ -133,23 +151,20 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline
+// Middleware
 app.UseMiddleware<ExceptionMiddleware>();
 app.UseMiddleware<LoggingMiddleware>();
 
-if (app.Environment.IsDevelopment())
+// Swagger (Enabled in all environments)
+app.UseSwagger();
+app.UseSwaggerUI(c =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "ResQConnect API v1");
-    });
-}
-
-// Disable HTTPS redirection in development to simplify local Docker testing if desired
-// app.UseHttpsRedirection();
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "ResQConnect API v1");
+    c.RoutePrefix = "swagger";
+});
 
 app.UseStaticFiles();
+
 app.UseCors("AllowClient");
 
 app.UseAuthentication();
@@ -157,28 +172,22 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-// Automatically apply database migrations on startup if configured
+// Apply Migrations Automatically
 using (var scope = app.Services.CreateScope())
 {
-    var services = scope.ServiceProvider;
     try
     {
-        var context = services.GetRequiredService<ApplicationDbContext>();
-        // Check if database server is reachable before attempting migrations
-        if (context.Database.CanConnect())
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        if (db.Database.CanConnect())
         {
-            context.Database.Migrate();
-        }
-        else
-        {
-            Console.WriteLine("Warning: Could not connect to MySQL database to apply migrations automatically. Please run migrations manually or verify credentials.");
+            db.Database.Migrate();
         }
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"An error occurred while automatically applying migrations: {ex.Message}");
+        Console.WriteLine($"Migration Error: {ex.Message}");
     }
 }
-
 
 app.Run();
