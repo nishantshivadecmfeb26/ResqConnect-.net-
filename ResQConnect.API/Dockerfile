@@ -3,16 +3,16 @@ WORKDIR /src
 
 COPY . .
 
-RUN dotnet restore ResQConnect.API.csproj
-RUN dotnet publish ResQConnect.API.csproj -c Release -o /app/publish
+RUN dotnet restore "ResQConnect.API.csproj"
+RUN dotnet publish "ResQConnect.API.csproj" -c Release -o /app/publish
 
-FROM mcr.microsoft.com/dotnet/aspnet:9.0
+FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
 WORKDIR /app
 
 COPY --from=build /app/publish .
 
-ENV ASPNETCORE_URLS=http://+:8080
+ENV ASPNETCORE_URLS=http://+:10000
 
-EXPOSE 8080
+EXPOSE 10000
 
-ENTRYPOINT ["dotnet","ResQConnect.API.dll"]
+ENTRYPOINT ["dotnet", "ResQConnect.API.dll"]
